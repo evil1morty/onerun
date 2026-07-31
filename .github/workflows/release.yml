@@ -53,10 +53,8 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
+      - name: Rust build cache (kache)
+        uses: kunobi-ninja/kache-action@v1
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-22.04'

@@ -1,6 +1,6 @@
 [package]
 name = "onerun"
-version = "0.23.2"
+version = "0.24.0"
 description = "A lightweight desktop app to manage all your dev servers in one place"
 edition = "2021"
 rust-version = "1.77.2"

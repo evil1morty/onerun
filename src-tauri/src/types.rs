@@ -13,6 +13,7 @@ pub struct ProcessState {
     pub pid: Option<u32>,
     pub running: bool,
     pub logs: VecDeque<LogLine>,
+    pub log_bytes: usize,           // running total of `logs[..].text.len()` — caps buffer by size, not just count
     pub detected_url: Option<String>,
     pub url_confidence: UrlConfidence,
     pub job_handle: Option<usize>,  // per-process job object for reliable kill
@@ -21,6 +22,11 @@ pub struct ProcessState {
 
 pub struct AppState {
     pub processes: Arc<Mutex<HashMap<String, ProcessState>>>,
+    /// Process key currently displayed in the log panel, or `None` when the
+    /// panel is closed. Reader threads only emit `process-log` events for this
+    /// key — everything else is buffered in `ProcessState::logs` and fetched
+    /// on demand, so background output costs nothing on the IPC bridge.
+    pub log_viewer: Arc<Mutex<Option<String>>>,
     pub config_path: Mutex<PathBuf>,
     pub settings_path: Mutex<PathBuf>,
     pub force_close: Mutex<bool>,
@@ -45,6 +51,9 @@ pub struct Settings {
     pub tag_order: Vec<String>,
     #[serde(default = "default_tags_visible")]
     pub tags_visible: bool,
+    /// Parent folder for newly created projects. Empty = Documents/projects.
+    #[serde(default)]
+    pub projects_dir: String,
 }
 
 fn default_claude_mode() -> String { "tab".into() }
@@ -64,6 +73,7 @@ impl Default for Settings {
             autostart: false,
             tag_order: Vec::new(),
             tags_visible: true,
+            projects_dir: String::new(),
         }
     }
 }
@@ -99,12 +109,21 @@ pub struct CommandDef {
 
 // ── Event payloads ─────────────────────────────────
 
+/// Which pipe a log line came from. Serializes to `"stdout"` / `"stderr"`,
+/// matching the CSS class names the frontend applies.
+#[derive(Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Stream {
+    Stdout,
+    Stderr,
+}
+
 #[derive(Serialize, Clone)]
 pub struct LogPayload {
     pub id: String,
     pub label: String,
     pub text: String,
-    pub stream: String,
+    pub stream: Stream,
 }
 
 #[derive(Serialize, Clone)]
@@ -118,7 +137,7 @@ pub struct StatusPayload {
 #[derive(Serialize, Clone)]
 pub struct LogLine {
     pub text: String,
-    pub stream: String,
+    pub stream: Stream,
 }
 
 /// Per-command status returned by get_all_status.

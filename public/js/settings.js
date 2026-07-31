@@ -7,6 +7,7 @@ const $overlay    = $('settings-overlay');
 const $claude     = $('set-claude');
 const $claudeMode = $('set-claude-mode');
 const $editor     = $('set-editor');
+const $projectsDir = $('set-projects-dir');
 const $autostart  = $('set-autostart');
 const $savedPill  = $('settings-saved-pill');
 
@@ -16,6 +17,10 @@ export async function openSettings() {
   $claude.value     = state.settings.claude_command;
   $claudeMode.value = state.settings.claude_mode || 'window';
   $editor.value     = state.settings.editor_command;
+  $projectsDir.value = state.settings.projects_dir || '';
+  if (!$projectsDir.placeholder) {
+    try { $projectsDir.placeholder = await api.getDefaultProjectsDir(); } catch (_) {}
+  }
   try { $autostart.checked = await api.getAutostart(); } catch (_) { $autostart.checked = false; }
   $overlay.classList.remove('hidden');
 }
@@ -72,6 +77,7 @@ async function persist() {
   state.settings.claude_command = $claude.value.trim() || 'claude';
   state.settings.claude_mode    = $claudeMode.value;
   state.settings.editor_command = $editor.value.trim() || 'code';
+  state.settings.projects_dir   = $projectsDir.value.trim();
   state.settings.autostart      = $autostart.checked;
   try {
     await api.saveSettings(state.settings);
@@ -85,7 +91,7 @@ function scheduleSave() {
   _saveTimer = setTimeout(persist, 350);
 }
 
-[$claude, $editor].forEach(el => el.addEventListener('input', scheduleSave));
+[$claude, $editor, $projectsDir].forEach(el => el.addEventListener('input', scheduleSave));
 $claudeMode.addEventListener('change', persist);
 $autostart.addEventListener('change', persist);
 

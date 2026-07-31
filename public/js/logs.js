@@ -1,6 +1,6 @@
 import { state, getProject, getStatus, getCmdStatus } from './state.js';
 import { api } from './api.js';
-import { $, el, toggle, appendLogLine } from './dom.js';
+import { $, el, toggle, appendLogLine, flushLogLines, resetLogLines } from './dom.js';
 import { runCommand } from './dashboard.js';
 
 const $logPanel = $('log-panel');
@@ -24,6 +24,9 @@ export async function openLogPanel(id) {
   const runningLabel = proj.commands.find(c => cmds[c.label]?.running)?.label;
   state.activeLogTab = runningLabel || proj.commands[0]?.label || null;
 
+  // Subscribe before reading the buffer so nothing printed in between is lost.
+  await setLogViewer();
+
   toggle($logPanel, true);
   $dash.classList.add('blurred');
   updateLogHeader();
@@ -41,7 +44,15 @@ export function closeLogPanel() {
   $dash.classList.remove('blurred');
   state.activeLogId = null;
   state.activeLogTab = null;
+  resetLogLines();
+  setLogViewer();
   document.querySelectorAll('.project-row').forEach(r => r.classList.remove('active'));
+}
+
+/** Tell the backend which command is on screen — it only streams live log
+ *  events for that one. */
+export function setLogViewer() {
+  return api.setLogViewer(state.activeLogId, state.activeLogTab).catch(() => {});
 }
 
 // ── Tab switching ──────────────────────────────────
@@ -49,11 +60,13 @@ export function closeLogPanel() {
 export async function switchTab(label) {
   if (label === state.activeLogTab) return;
   state.activeLogTab = label;
+  await setLogViewer();
   updateLogTabs();
   await loadTabLogs();
 }
 
 async function loadTabLogs() {
+  resetLogLines();
   $logOut.innerHTML = '';
   if (!state.activeLogId || !state.activeLogTab) {
     showEmptyLog();
@@ -89,6 +102,8 @@ export function appendLog(text, stream) {
  *  Live-only (not persisted); helps the user tell the command has ended
  *  without needing to read every output line. */
 export function appendLogMarker(label) {
+  // Land after any lines still queued for this frame.
+  flushLogLines();
   const empty = $logOut.querySelector('.log-empty');
   if (empty) empty.remove();
 
@@ -219,6 +234,7 @@ $dash.addEventListener('click', (e) => {
   closeLogPanel();
 }, true);
 $('log-copy').addEventListener('click', () => {
+  flushLogLines(); // include lines queued for this frame
   const lines = $logOut.querySelectorAll('.log-line');
   const text = Array.from(lines).map(l => l.textContent).join('\n');
   navigator.clipboard.writeText(text);
@@ -231,6 +247,7 @@ $('log-copy').addEventListener('click', () => {
   }, 1500);
 });
 $('log-clear').addEventListener('click', () => {
+  resetLogLines();
   $logOut.innerHTML = '';
   const clearBtn = $('log-clear');
   clearBtn.textContent = 'Cleared!';

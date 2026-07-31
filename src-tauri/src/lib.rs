@@ -44,6 +44,7 @@ pub fn run() {
 
             app.manage(AppState {
                 processes: Arc::new(Mutex::new(HashMap::new())),
+                log_viewer: Arc::new(Mutex::new(None)),
                 config_path: Mutex::new(config_dir.join("projects.json")),
                 settings_path: Mutex::new(config_dir.join("settings.json")),
                 force_close: Mutex::new(false),
@@ -120,6 +121,7 @@ pub fn run() {
             commands::stop_all_processes,
             commands::purge_project,
             commands::get_logs,
+            commands::set_log_viewer,
             commands::get_status,
             commands::get_all_status,
             commands::open_in_explorer,
@@ -135,6 +137,8 @@ pub fn run() {
             commands::get_autostart,
             commands::set_autostart,
             commands::check_paths_exist,
+            commands::get_default_projects_dir,
+            commands::create_project_folder,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

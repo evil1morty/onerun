@@ -1,6 +1,6 @@
 import { state, getStatus, getCmdStatus, checkProjectPaths } from './state.js';
 import { api } from './api.js';
-import { $, el, btn, toggle, appendLogLine, tagColor, rebuildTagColors } from './dom.js';
+import { $, el, btn, toggle, appendLogLine, resetLogLines, tagColor, rebuildTagColors } from './dom.js';
 import { openContextMenu, showConfirm } from './context-menu.js';
 import { openLogPanel, closeLogPanel } from './logs.js';
 import { openDialog } from './dialog.js';
@@ -149,7 +149,11 @@ function attachTagDragHandlers(chip) {
     };
     _tagDragMoved = false;
     document.addEventListener('pointermove', onTagDragMove);
-    document.addEventListener('pointerup', onTagDragEnd, { once: true });
+    document.addEventListener('pointerup', onTagDragEnd);
+    // Without this a cancelled gesture would leave _tagDrag set, and
+    // renderTagBar() bails while a drag is active — the tag bar would stop
+    // updating until restart.
+    document.addEventListener('pointercancel', onTagDragEnd);
   });
 }
 
@@ -186,6 +190,8 @@ function onTagDragMove(e) {
 
 function onTagDragEnd() {
   document.removeEventListener('pointermove', onTagDragMove);
+  document.removeEventListener('pointerup', onTagDragEnd);
+  document.removeEventListener('pointercancel', onTagDragEnd);
   if (!_tagDrag) return;
   const wasActive = _tagDrag.active;
   _tagDrag.el.classList.remove('tag-dragging');
@@ -375,6 +381,7 @@ export async function runCommand(id, label, cmd, cwd, env = []) {
 
   const $logOut = $('log-output');
   if (id === state.activeLogId && label === state.activeLogTab) {
+    resetLogLines();
     $logOut.innerHTML = '';
     appendLogLine($logOut, `$ ${cmd}`, 'info');
   }
@@ -430,6 +437,7 @@ function onRowPointerDown(e) {
 
   document.addEventListener('pointermove', onDragMove);
   document.addEventListener('pointerup', onDragEnd);
+  document.addEventListener('pointercancel', cleanupDrag);
 }
 
 function activateDrag() {
@@ -512,6 +520,7 @@ function onDragMove(e) {
 function onDragEnd() {
   document.removeEventListener('pointermove', onDragMove);
   document.removeEventListener('pointerup', onDragEnd);
+  document.removeEventListener('pointercancel', cleanupDrag);
   if (!_drag) return;
 
   if (_drag.active && _drag.dropTarget) {
@@ -548,6 +557,7 @@ function cleanupDrag() {
   document.body.classList.remove('is-dragging');
   document.removeEventListener('pointermove', onDragMove);
   document.removeEventListener('pointerup', onDragEnd);
+  document.removeEventListener('pointercancel', cleanupDrag);
   _drag = null;
 }
 

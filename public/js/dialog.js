@@ -14,9 +14,46 @@ const $tagWrap  = $('tag-input-wrap');
 const $inpTag   = $('inp-tag');
 const $tagSugg  = $('tag-suggestions');
 
+const $modeToggle = $('add-mode-toggle');
+const $modeExisting = $('mode-existing');
+const $modeNew = $('mode-new');
+const $dirField = $('dir-field');
+const $newDirHint = $('new-dir-hint');
+
 const MAX_SUGGESTIONS = 10;
 
 let dialogTags = [];  // tags for the current dialog session
+let addMode = 'existing';  // 'existing' | 'new' — only relevant when adding
+let defaultProjectsDir = null;
+
+function setAddMode(mode) {
+  addMode = mode;
+  $modeExisting.classList.toggle('active', mode === 'existing');
+  $modeNew.classList.toggle('active', mode === 'new');
+  $dirField.classList.toggle('hidden', mode === 'new');
+  $newDirHint.classList.toggle('hidden', mode !== 'new');
+  if (mode === 'new') {
+    updateNewDirHint();
+    $inpName.focus();
+  } else {
+    $inpDir.focus();
+  }
+}
+
+async function updateNewDirHint() {
+  const custom = (state.settings.projects_dir || '').trim();
+  if (custom) {
+    $('new-dir-parent').textContent = custom;
+    return;
+  }
+  if (!defaultProjectsDir) {
+    try { defaultProjectsDir = await api.getDefaultProjectsDir(); } catch (_) {}
+  }
+  $('new-dir-parent').textContent = defaultProjectsDir || 'Documents\\projects';
+}
+
+$modeExisting.addEventListener('click', () => setAddMode('existing'));
+$modeNew.addEventListener('click', () => setAddMode('new'));
 
 // ── Open / Close ───────────────────────────────────
 
@@ -27,6 +64,11 @@ export function openDialog(id) {
   $dlgTitle.textContent = proj ? 'Edit Project' : 'Add Project';
   $inpName.value = proj ? proj.name : '';
   $inpDir.value = proj ? proj.directory : '';
+
+  // Mode toggle only makes sense when adding
+  $modeToggle.classList.toggle('hidden', !!proj);
+  setAddMode('existing');
+  $('dialog-error').classList.add('hidden');
 
   dialogTags = proj && proj.tags ? [...proj.tags] : [];
   $inpTag.value = '';
@@ -147,6 +189,19 @@ function prettifyName(name) {
 function clearErrorOnInput(input) {
   input.addEventListener('input', () => input.classList.remove('input-error'));
 }
+
+const $dlgError = $('dialog-error');
+
+function showDialogError(msg) {
+  $dlgError.textContent = msg;
+  $dlgError.classList.remove('hidden');
+}
+
+function hideDialogError() {
+  $dlgError.classList.add('hidden');
+}
+
+$inpName.addEventListener('input', hideDialogError);
 
 // ── Scan directory ─────────────────────────────────
 
@@ -297,16 +352,30 @@ $('btn-save').addEventListener('mousedown', e => e.preventDefault());
 // Save
 $('btn-save').addEventListener('click', async () => {
   const name = $inpName.value.trim();
-  const dir = $inpDir.value.trim();
+  const isNewFolder = !state.editingId && addMode === 'new';
+  let dir = $inpDir.value.trim();
+
   $inpName.classList.toggle('input-error', !name);
-  $inpDir.classList.toggle('input-error', !dir);
-  if (!name || !dir) return;
+  if (!isNewFolder) $inpDir.classList.toggle('input-error', !dir);
+  if (!name || (!isNewFolder && !dir)) return;
 
   const commands = validateCommands();
   if (!commands) return;
 
   const env = collectEnvVars();
   if (!env) return;
+
+  if (isNewFolder) {
+    // Create the empty folder under the configured parent; backend
+    // errors if a folder with that name already exists.
+    try {
+      dir = await api.createProjectFolder(name);
+    } catch (err) {
+      $inpName.classList.add('input-error');
+      showDialogError(String(err));
+      return;
+    }
+  }
 
   const duplicate = state.projects.find(p => p.directory === dir && p.id !== state.editingId);
   if (duplicate) {
@@ -315,10 +384,12 @@ $('btn-save').addEventListener('click', async () => {
   }
 
   let framework = null;
-  try {
-    const scan = await api.scanProject(dir);
-    framework = scan.framework;
-  } catch (_) {}
+  if (!isNewFolder) {
+    try {
+      const scan = await api.scanProject(dir);
+      framework = scan.framework;
+    } catch (_) {}
+  }
 
   commitPendingTag();
   const tags = [...dialogTags];

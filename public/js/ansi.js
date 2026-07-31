@@ -8,6 +8,14 @@ const C16 = [
   '#8b949e', '#ff7b72', '#56d364', '#e3b341', '#79c0ff', '#d2a8ff', '#56d4dd', '#f0f6fc',
 ];
 
+/** Clamp an SGR parameter to a 0-255 colour channel. Guards the inline style
+ *  below — parameters are raw text from the log and must never reach the
+ *  style attribute unvalidated. */
+function chan(v) {
+  const n = parseInt(v, 10);
+  return isNaN(n) ? 0 : Math.max(0, Math.min(255, n));
+}
+
 function c256(n) {
   if (n < 16) return C16[n];
   if (n < 232) {
@@ -66,14 +74,14 @@ export function ansiToHtml(raw) {
         else if (p === 38) {
           const m = parseInt(params[k + 1], 10);
           if (m === 5 && k + 2 < params.length) { fg = c256(parseInt(params[k + 2], 10) || 0); k += 2; }
-          else if (m === 2 && k + 4 < params.length) { fg = `rgb(${params[k+2]},${params[k+3]},${params[k+4]})`; k += 4; }
+          else if (m === 2 && k + 4 < params.length) { fg = `rgb(${chan(params[k+2])},${chan(params[k+3])},${chan(params[k+4])})`; k += 4; }
         }
         else if (p === 39) fg = null;
         else if (p >= 40 && p <= 47) bg = C16[p - 40];
         else if (p === 48) {
           const m = parseInt(params[k + 1], 10);
           if (m === 5 && k + 2 < params.length) { bg = c256(parseInt(params[k + 2], 10) || 0); k += 2; }
-          else if (m === 2 && k + 4 < params.length) { bg = `rgb(${params[k+2]},${params[k+3]},${params[k+4]})`; k += 4; }
+          else if (m === 2 && k + 4 < params.length) { bg = `rgb(${chan(params[k+2])},${chan(params[k+3])},${chan(params[k+4])})`; k += 4; }
         }
         else if (p === 49) bg = null;
         else if (p >= 90 && p <= 97) fg = C16[p - 82];

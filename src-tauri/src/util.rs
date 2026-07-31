@@ -136,16 +136,33 @@ pub fn detect_framework(pkg: &serde_json::Value) -> Option<String> {
 
     // Order matters — more specific frameworks first
     let frameworks: &[(&dyn Fn() -> bool, &str)] = &[
+        // Desktop / mobile shells (checked first — they wrap web frameworks)
+        (&|| has("@tauri-apps/api") || has("@tauri-apps/cli"), "Tauri"),
+        (&|| has("electron"), "Electron"),
+        (&|| has("expo"), "Expo"),
+        (&|| has("react-native"), "React Native"),
+        (&|| has("@ionic/core") || has("@ionic/react") || has("@ionic/angular") || has("@ionic/vue"), "Ionic"),
+        // Meta-frameworks
         (&|| has("next"), "Next.js"),
         (&|| has("nuxt") || has("nuxt3"), "Nuxt"),
         (&|| has("@angular/core"), "Angular"),
-        (&|| has("svelte") || has("@sveltejs/kit"), "Svelte"),
+        (&|| has("@sveltejs/kit"), "SvelteKit"),
+        (&|| has("svelte"), "Svelte"),
         (&|| has("gatsby"), "Gatsby"),
-        (&|| has("remix") || has("@remix-run/react"), "Remix"),
+        (&|| has("remix") || has("@remix-run/react") || has("@react-router/dev"), "Remix"),
         (&|| has("astro"), "Astro"),
+        (&|| has("solid-start") || has("@solidjs/start"), "SolidStart"),
         (&|| has("solid-js"), "Solid"),
         (&|| has("qwik") || has("@builder.io/qwik"), "Qwik"),
+        (&|| has("@redwoodjs/core"), "RedwoodJS"),
+        (&|| has("@docusaurus/core"), "Docusaurus"),
+        (&|| has("vitepress"), "VitePress"),
+        (&|| has("vuepress"), "VuePress"),
         (&|| has("eleventy") || has("@11ty/eleventy"), "11ty"),
+        (&|| has("ember-source") || has("ember-cli"), "Ember"),
+        // Backend frameworks
+        (&|| has("@strapi/strapi") || has("strapi"), "Strapi"),
+        (&|| has("@adonisjs/core"), "AdonisJS"),
         (&|| has("hono"), "Hono"),
         (&|| has("elysia"), "Elysia"),
         (&|| has("nest") || has("@nestjs/core"), "NestJS"),
@@ -153,7 +170,9 @@ pub fn detect_framework(pkg: &serde_json::Value) -> Option<String> {
         (&|| has("vite"), "Vite"),
         (&|| has("express"), "Express"),
         (&|| has("fastify"), "Fastify"),
+        // UI libraries (last — most specific frameworks include these)
         (&|| has("react-scripts"), "CRA"),
+        (&|| has("preact"), "Preact"),
         (&|| has("react"), "React"),
         (&|| has("vue"), "Vue"),
     ];

@@ -11,6 +11,7 @@ export const api = {
   saveSettings:    (settings)      => invoke('save_settings', { settings }),
   getAllStatus:     ()              => invoke('get_all_status'),
   getLogs:         (id, label)     => invoke('get_logs', { id, label }),
+  setLogViewer:    (id, label)     => invoke('set_log_viewer', { id, label }),
   startProcess:    (id, command, label, cwd, env) => invoke('start_process', { id, command, label, cwd, env: env || [] }),
   stopProcess:     (id, label)     => invoke('stop_process', { id, label }),
   stopAll:         (id)            => invoke('stop_all_processes', { id }),
@@ -26,4 +27,6 @@ export const api = {
   getAutostart:    ()              => invoke('get_autostart'),
   setAutostart:    (enabled)       => invoke('set_autostart', { enabled }),
   checkPathsExist: (paths)         => invoke('check_paths_exist', { paths }),
+  getDefaultProjectsDir: ()        => invoke('get_default_projects_dir'),
+  createProjectFolder: (name)      => invoke('create_project_folder', { name }),
 };

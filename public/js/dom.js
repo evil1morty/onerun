@@ -25,8 +25,18 @@ export function toggle(node, visible) {
   node.classList.toggle('hidden', !visible);
 }
 
-/** Append a log line div to a container */
-export function appendLogLine(container, text, stream) {
+// ── Log output ─────────────────────────────────────
+// Lines are queued and flushed once per animation frame. Appending each line
+// on arrival meant one forced layout per line (the scroll-position read), so
+// a burst of output from a dev server would lock up the UI.
+
+const MAX_LOG_NODES = 2000;
+
+let _logQueue = [];
+let _logContainer = null;
+let _logRaf = 0;
+
+function makeLogLine(text, stream) {
   const div = document.createElement('div');
   div.className = 'log-line ' + (stream || 'stdout');
   if (text.includes('\x1b')) {
@@ -34,14 +44,51 @@ export function appendLogLine(container, text, stream) {
   } else {
     div.textContent = text;
   }
-  container.appendChild(div);
+  return div;
+}
 
-  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
-  if (nearBottom) container.scrollTop = container.scrollHeight;
+/** Queue a log line for the next frame. */
+export function appendLogLine(container, text, stream) {
+  if (_logContainer && _logContainer !== container) flushLogLines();
+  _logContainer = container;
+  _logQueue.push([text, stream]);
 
-  while (container.children.length > 2000) {
-    container.removeChild(container.firstChild);
+  // Frames stop firing while the window is hidden in the tray, so the queue
+  // has to be self-limiting. Anything past MAX_LOG_NODES would be trimmed off
+  // the top on flush anyway; drop it in batches to keep this O(1) amortized.
+  if (_logQueue.length > MAX_LOG_NODES * 2) {
+    _logQueue.splice(0, _logQueue.length - MAX_LOG_NODES);
   }
+
+  if (!_logRaf) _logRaf = requestAnimationFrame(flushLogLines);
+}
+
+/** Write every queued line in one pass. Safe to call at any time. */
+export function flushLogLines() {
+  if (_logRaf) { cancelAnimationFrame(_logRaf); _logRaf = 0; }
+  const container = _logContainer;
+  if (!container || _logQueue.length === 0) { _logQueue.length = 0; return; }
+
+  // Measure before appending — afterwards we are never "near the bottom".
+  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+
+  const frag = document.createDocumentFragment();
+  for (const [text, stream] of _logQueue) frag.appendChild(makeLogLine(text, stream));
+  _logQueue.length = 0;
+  container.appendChild(frag);
+
+  let over = container.children.length - MAX_LOG_NODES;
+  while (over-- > 0) container.removeChild(container.firstChild);
+
+  if (nearBottom) container.scrollTop = container.scrollHeight;
+}
+
+/** Drop queued lines — call before clearing the log element, so pending
+ *  output from the previous tab can't land in the new one. */
+export function resetLogLines() {
+  if (_logRaf) { cancelAnimationFrame(_logRaf); _logRaf = 0; }
+  _logQueue.length = 0;
+  _logContainer = null;
 }
 
 /** Close an overlay when clicking the backdrop */

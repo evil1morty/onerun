@@ -11,6 +11,10 @@ import { toast } from './js/toast.js';
 // ── Bootstrap ──────────────────────────────────────
 
 async function init() {
+  // A webview reload leaves the backend's log-viewer key pointing at whatever
+  // was open before; nothing is on screen yet, so clear it.
+  api.setLogViewer(null, null).catch(() => {});
+
   state.settings = await api.loadSettings();
   state.projects = await api.loadConfig();
   ensurePinnedOrder();

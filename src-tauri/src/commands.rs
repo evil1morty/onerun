@@ -40,14 +40,27 @@ const SKIP_SCRIPTS: &[&str] = &["prepare", "prepublishOnly", "postinstall", "pre
 pub fn scan_project(directory: String) -> Result<ScanResult, String> {
     let dir = PathBuf::from(&directory);
 
-    // Try each project type in order
+    // Try each project type in order.
+    // WordPress first: a WP root can also contain package.json (theme tooling).
+    if dir.join("wp-config.php").exists()
+        || (dir.join("wp-content").is_dir() && dir.join("wp-includes").is_dir())
+    {
+        return scan_wordpress(&dir);
+    }
+    if dir.join("deno.json").exists() || dir.join("deno.jsonc").exists() {
+        return scan_deno(&dir);
+    }
     if dir.join("package.json").exists() {
         return scan_node(&dir);
     }
     if dir.join("Cargo.toml").exists() {
         return scan_cargo(&dir);
     }
-    if dir.join("pyproject.toml").exists() || dir.join("requirements.txt").exists() {
+    if dir.join("pyproject.toml").exists()
+        || dir.join("requirements.txt").exists()
+        || dir.join("setup.py").exists()
+        || dir.join("Pipfile").exists()
+    {
         return scan_python(&dir);
     }
     if dir.join("composer.json").exists() {
@@ -55,6 +68,30 @@ pub fn scan_project(directory: String) -> Result<ScanResult, String> {
     }
     if dir.join("go.mod").exists() {
         return scan_go(&dir);
+    }
+    if dir.join("Gemfile").exists() {
+        return scan_ruby(&dir);
+    }
+    if dir.join("mix.exs").exists() {
+        return scan_elixir(&dir);
+    }
+    if dir.join("pubspec.yaml").exists() {
+        return scan_dart(&dir);
+    }
+    if dir.join("pom.xml").exists() {
+        return scan_maven(&dir);
+    }
+    if dir.join("build.gradle").exists() || dir.join("build.gradle.kts").exists() {
+        return scan_gradle(&dir);
+    }
+    if let Some(result) = scan_dotnet(&dir) {
+        return Ok(result);
+    }
+    if dir.join("CMakeLists.txt").exists() {
+        return scan_cmake(&dir);
+    }
+    if dir.join("build.zig").exists() {
+        return scan_zig(&dir);
     }
     if dir.join("Makefile").exists() || dir.join("makefile").exists() {
         return scan_makefile(&dir);
@@ -64,10 +101,14 @@ pub fn scan_project(directory: String) -> Result<ScanResult, String> {
     }
 
     // Fallback: use folder name, no commands
-    let name = dir.file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let name = dir_name(&dir);
     Ok(ScanResult { name, framework: None, commands: vec![] })
+}
+
+fn dir_name(dir: &Path) -> String {
+    dir.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default()
 }
 
 // ── Node.js / Bun ──────────────────────────────────
@@ -77,7 +118,14 @@ fn scan_node(dir: &Path) -> Result<ScanResult, String> {
     let pkg: serde_json::Value = serde_json::from_str(&data).map_err(|e| e.to_string())?;
 
     let name = pkg.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let framework = detect_framework(&pkg);
+    // No known framework → still show the language so the badge isn't empty
+    let framework = detect_framework(&pkg).or_else(|| {
+        if dir.join("tsconfig.json").exists() {
+            Some("TypeScript".into())
+        } else {
+            Some("JavaScript".into())
+        }
+    });
 
     // Detect package manager
     let runner = if dir.join("bun.lockb").exists() || dir.join("bun.lock").exists() {
@@ -146,33 +194,34 @@ fn scan_python(dir: &Path) -> Result<ScanResult, String> {
     let mut framework = None;
     let mut commands = Vec::new();
 
-    // Check pyproject.toml for framework hints
-    if let Ok(data) = fs::read_to_string(dir.join("pyproject.toml")) {
-        if data.contains("django") {
-            framework = Some("Django".into());
-            commands.push(CommandDef { label: "dev".into(), cmd: "python manage.py runserver".into() });
-            commands.push(CommandDef { label: "migrate".into(), cmd: "python manage.py migrate".into() });
-        } else if data.contains("fastapi") || data.contains("uvicorn") {
-            framework = Some("FastAPI".into());
-            commands.push(CommandDef { label: "dev".into(), cmd: "uvicorn main:app --reload".into() });
-        } else if data.contains("flask") {
-            framework = Some("Flask".into());
-            commands.push(CommandDef { label: "dev".into(), cmd: "flask run --reload".into() });
+    // Gather dependency hints from pyproject.toml / requirements.txt / Pipfile
+    let mut deps = String::new();
+    for f in &["pyproject.toml", "requirements.txt", "Pipfile"] {
+        if let Ok(data) = fs::read_to_string(dir.join(f)) {
+            deps.push_str(&data.to_lowercase());
         }
     }
 
-    // Check for manage.py (Django)
-    if commands.is_empty() && dir.join("manage.py").exists() {
+    if deps.contains("django") || dir.join("manage.py").exists() {
         framework = Some("Django".into());
         commands.push(CommandDef { label: "dev".into(), cmd: "python manage.py runserver".into() });
         commands.push(CommandDef { label: "migrate".into(), cmd: "python manage.py migrate".into() });
+    } else if deps.contains("fastapi") || deps.contains("uvicorn") {
+        framework = Some("FastAPI".into());
+        commands.push(CommandDef { label: "dev".into(), cmd: "uvicorn main:app --reload".into() });
+    } else if deps.contains("flask") {
+        framework = Some("Flask".into());
+        commands.push(CommandDef { label: "dev".into(), cmd: "flask run --reload".into() });
+    } else if deps.contains("streamlit") {
+        framework = Some("Streamlit".into());
+        commands.push(CommandDef { label: "dev".into(), cmd: "streamlit run app.py".into() });
     }
 
     if commands.is_empty() {
         commands.push(CommandDef { label: "run".into(), cmd: "python main.py".into() });
     }
 
-    Ok(ScanResult { name, framework, commands })
+    Ok(ScanResult { name, framework: framework.or_else(|| Some("Python".into())), commands })
 }
 
 // ── Go ─────────────────────────────────────────────
@@ -258,10 +307,19 @@ fn scan_php(dir: &Path) -> Result<ScanResult, String> {
         Some("Laravel".into())
     } else if has("symfony/framework-bundle") || has("symfony/console") {
         Some("Symfony".into())
-    } else if has("wordpress/core") || dir.join("wp-config.php").exists() {
+    } else if has("wordpress/core")
+        || has("johnpbloch/wordpress")
+        || has("roots/wordpress")
+        || dir.join("wp-config.php").exists()
+        || dir.join("style.css").exists() && dir.join("functions.php").exists() // WP theme
+    {
         Some("WordPress".into())
+    } else if has("slim/slim") {
+        Some("Slim".into())
+    } else if has("cakephp/cakephp") {
+        Some("CakePHP".into())
     } else {
-        None
+        Some("PHP".into())
     };
 
     let mut commands = Vec::new();
@@ -316,6 +374,294 @@ fn scan_docker_compose(dir: &Path) -> Result<ScanResult, String> {
     })
 }
 
+// ── WordPress ──────────────────────────────────────
+
+fn scan_wordpress(dir: &Path) -> Result<ScanResult, String> {
+    // A WP root may also carry package.json (theme/block tooling) — keep
+    // those npm scripts but brand the project as WordPress.
+    let mut result = if dir.join("package.json").exists() {
+        scan_node(dir).unwrap_or(ScanResult {
+            name: dir_name(dir),
+            framework: None,
+            commands: vec![],
+        })
+    } else {
+        ScanResult { name: dir_name(dir), framework: None, commands: vec![] }
+    };
+
+    if result.name.is_empty() {
+        result.name = dir_name(dir);
+    }
+    result.framework = Some("WordPress".into());
+
+    let has_serve = result.commands.iter().any(|c| {
+        matches!(c.label.as_str(), "dev" | "serve" | "start")
+    });
+    if !has_serve {
+        result.commands.insert(0, CommandDef {
+            label: "serve".into(),
+            cmd: "php -S localhost:8080".into(),
+        });
+    }
+    Ok(result)
+}
+
+// ── Deno ───────────────────────────────────────────
+
+fn scan_deno(dir: &Path) -> Result<ScanResult, String> {
+    let mut commands = Vec::new();
+    for f in &["deno.json", "deno.jsonc"] {
+        if let Ok(data) = fs::read_to_string(dir.join(f)) {
+            // jsonc: tolerate parse failure, fall through to defaults
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(tasks) = json.get("tasks").and_then(|v| v.as_object()) {
+                    for key in tasks.keys() {
+                        commands.push(CommandDef {
+                            label: key.clone(),
+                            cmd: format!("deno task {}", key),
+                        });
+                    }
+                }
+            }
+            break;
+        }
+    }
+    if commands.is_empty() {
+        commands.push(CommandDef { label: "run".into(), cmd: "deno run -A main.ts".into() });
+        commands.push(CommandDef { label: "test".into(), cmd: "deno test".into() });
+    }
+    Ok(ScanResult { name: dir_name(dir), framework: Some("Deno".into()), commands })
+}
+
+// ── Ruby ───────────────────────────────────────────
+
+fn scan_ruby(dir: &Path) -> Result<ScanResult, String> {
+    let gemfile = fs::read_to_string(dir.join("Gemfile")).unwrap_or_default().to_lowercase();
+
+    let (framework, commands) = if gemfile.contains("rails") || dir.join("bin/rails").exists() {
+        ("Rails", vec![
+            CommandDef { label: "dev".into(), cmd: "bin/rails server".into() },
+            CommandDef { label: "console".into(), cmd: "bin/rails console".into() },
+            CommandDef { label: "migrate".into(), cmd: "bin/rails db:migrate".into() },
+            CommandDef { label: "test".into(), cmd: "bin/rails test".into() },
+        ])
+    } else if gemfile.contains("jekyll") {
+        ("Jekyll", vec![
+            CommandDef { label: "dev".into(), cmd: "bundle exec jekyll serve".into() },
+            CommandDef { label: "build".into(), cmd: "bundle exec jekyll build".into() },
+        ])
+    } else if gemfile.contains("sinatra") {
+        ("Sinatra", vec![
+            CommandDef { label: "dev".into(), cmd: "bundle exec ruby app.rb".into() },
+        ])
+    } else {
+        ("Ruby", vec![
+            CommandDef { label: "install".into(), cmd: "bundle install".into() },
+        ])
+    };
+
+    Ok(ScanResult { name: dir_name(dir), framework: Some(framework.into()), commands })
+}
+
+// ── Elixir ─────────────────────────────────────────
+
+fn scan_elixir(dir: &Path) -> Result<ScanResult, String> {
+    let mix = fs::read_to_string(dir.join("mix.exs")).unwrap_or_default();
+
+    let (framework, commands) = if mix.contains(":phoenix") {
+        ("Phoenix", vec![
+            CommandDef { label: "dev".into(), cmd: "mix phx.server".into() },
+            CommandDef { label: "deps".into(), cmd: "mix deps.get".into() },
+            CommandDef { label: "test".into(), cmd: "mix test".into() },
+        ])
+    } else {
+        ("Elixir", vec![
+            CommandDef { label: "run".into(), cmd: "mix run".into() },
+            CommandDef { label: "test".into(), cmd: "mix test".into() },
+        ])
+    };
+
+    Ok(ScanResult { name: dir_name(dir), framework: Some(framework.into()), commands })
+}
+
+// ── Dart / Flutter ─────────────────────────────────
+
+fn scan_dart(dir: &Path) -> Result<ScanResult, String> {
+    let pubspec = fs::read_to_string(dir.join("pubspec.yaml")).unwrap_or_default();
+    let name = pubspec.lines()
+        .find(|l| l.starts_with("name:"))
+        .map(|l| l.trim_start_matches("name:").trim().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| dir_name(dir));
+
+    if pubspec.contains("flutter") {
+        Ok(ScanResult {
+            name,
+            framework: Some("Flutter".into()),
+            commands: vec![
+                CommandDef { label: "run".into(), cmd: "flutter run".into() },
+                CommandDef { label: "test".into(), cmd: "flutter test".into() },
+                CommandDef { label: "build".into(), cmd: "flutter build apk".into() },
+            ],
+        })
+    } else {
+        Ok(ScanResult {
+            name,
+            framework: Some("Dart".into()),
+            commands: vec![
+                CommandDef { label: "run".into(), cmd: "dart run".into() },
+                CommandDef { label: "test".into(), cmd: "dart test".into() },
+            ],
+        })
+    }
+}
+
+// ── Java / Kotlin (Maven & Gradle) ─────────────────
+
+/// Platform-correct wrapper invocation, falling back to the global tool.
+fn build_tool(dir: &Path, wrapper: &str, fallback: &str) -> String {
+    #[cfg(windows)]
+    let candidate = format!("{}.bat", wrapper);
+    #[cfg(not(windows))]
+    let candidate = format!("./{}", wrapper);
+
+    let exists = {
+        #[cfg(windows)]
+        { dir.join(format!("{}.bat", wrapper)).exists() || dir.join(format!("{}.cmd", wrapper)).exists() }
+        #[cfg(not(windows))]
+        { dir.join(wrapper).exists() }
+    };
+    if exists { candidate } else { fallback.to_string() }
+}
+
+fn scan_maven(dir: &Path) -> Result<ScanResult, String> {
+    let pom = fs::read_to_string(dir.join("pom.xml")).unwrap_or_default();
+    // mvnw wrapper ships as mvnw.cmd on Windows
+    let mvn = {
+        #[cfg(windows)]
+        { if dir.join("mvnw.cmd").exists() { "mvnw.cmd".to_string() } else { "mvn".to_string() } }
+        #[cfg(not(windows))]
+        { if dir.join("mvnw").exists() { "./mvnw".to_string() } else { "mvn".to_string() } }
+    };
+
+    let (framework, mut commands) = if pom.contains("spring-boot") {
+        ("Spring Boot", vec![
+            CommandDef { label: "dev".into(), cmd: format!("{} spring-boot:run", mvn) },
+        ])
+    } else {
+        ("Java", vec![])
+    };
+    commands.push(CommandDef { label: "build".into(), cmd: format!("{} package", mvn) });
+    commands.push(CommandDef { label: "test".into(), cmd: format!("{} test", mvn) });
+
+    Ok(ScanResult { name: dir_name(dir), framework: Some(framework.into()), commands })
+}
+
+fn scan_gradle(dir: &Path) -> Result<ScanResult, String> {
+    let mut build = fs::read_to_string(dir.join("build.gradle")).unwrap_or_default();
+    build.push_str(&fs::read_to_string(dir.join("build.gradle.kts")).unwrap_or_default());
+    let gradle = build_tool(dir, "gradlew", "gradle");
+
+    let (framework, mut commands) = if build.contains("com.android") {
+        ("Android", vec![
+            CommandDef { label: "build".into(), cmd: format!("{} assembleDebug", gradle) },
+            CommandDef { label: "install".into(), cmd: format!("{} installDebug", gradle) },
+        ])
+    } else if build.contains("spring-boot") || build.contains("org.springframework") {
+        ("Spring Boot", vec![
+            CommandDef { label: "dev".into(), cmd: format!("{} bootRun", gradle) },
+            CommandDef { label: "build".into(), cmd: format!("{} build", gradle) },
+        ])
+    } else {
+        let lang = if dir.join("build.gradle.kts").exists() || build.contains("kotlin") {
+            "Kotlin"
+        } else {
+            "Java"
+        };
+        (lang, vec![
+            CommandDef { label: "run".into(), cmd: format!("{} run", gradle) },
+            CommandDef { label: "build".into(), cmd: format!("{} build", gradle) },
+        ])
+    };
+    commands.push(CommandDef { label: "test".into(), cmd: format!("{} test", gradle) });
+
+    Ok(ScanResult { name: dir_name(dir), framework: Some(framework.into()), commands })
+}
+
+// ── .NET ───────────────────────────────────────────
+
+/// Returns Some(..) only when the folder actually contains a .sln/.csproj/.fsproj.
+fn scan_dotnet(dir: &Path) -> Option<ScanResult> {
+    let mut csproj_content = String::new();
+    let mut found = false;
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("sln") | Some("fsproj") => found = true,
+                Some("csproj") => {
+                    found = true;
+                    if let Ok(data) = fs::read_to_string(&path) {
+                        csproj_content.push_str(&data);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if !found {
+        return None;
+    }
+
+    let framework = if csproj_content.contains("Microsoft.NET.Sdk.Web") {
+        "ASP.NET Core"
+    } else if csproj_content.contains("Microsoft.NET.Sdk.BlazorWebAssembly") {
+        "Blazor"
+    } else {
+        ".NET"
+    };
+
+    Some(ScanResult {
+        name: dir_name(dir),
+        framework: Some(framework.into()),
+        commands: vec![
+            CommandDef { label: "run".into(), cmd: "dotnet run".into() },
+            CommandDef { label: "watch".into(), cmd: "dotnet watch".into() },
+            CommandDef { label: "build".into(), cmd: "dotnet build".into() },
+            CommandDef { label: "test".into(), cmd: "dotnet test".into() },
+        ],
+    })
+}
+
+// ── C / C++ (CMake) ────────────────────────────────
+
+fn scan_cmake(dir: &Path) -> Result<ScanResult, String> {
+    Ok(ScanResult {
+        name: dir_name(dir),
+        framework: Some("C/C++".into()),
+        commands: vec![
+            CommandDef { label: "configure".into(), cmd: "cmake -B build".into() },
+            CommandDef { label: "build".into(), cmd: "cmake --build build".into() },
+            CommandDef { label: "test".into(), cmd: "ctest --test-dir build".into() },
+        ],
+    })
+}
+
+// ── Zig ────────────────────────────────────────────
+
+fn scan_zig(dir: &Path) -> Result<ScanResult, String> {
+    Ok(ScanResult {
+        name: dir_name(dir),
+        framework: Some("Zig".into()),
+        commands: vec![
+            CommandDef { label: "run".into(), cmd: "zig build run".into() },
+            CommandDef { label: "build".into(), cmd: "zig build".into() },
+            CommandDef { label: "test".into(), cmd: "zig build test".into() },
+        ],
+    })
+}
+
 // ── Helpers ────────────────────────────────────────
 
 fn is_lifecycle_hook(key: &str) -> bool {
@@ -327,6 +673,120 @@ fn is_lifecycle_hook(key: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create a unique temp project dir with the given files.
+    fn fixture(tag: &str, files: &[(&str, &str)]) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("onerun-scan-test-{}-{}", std::process::id(), tag));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for (name, content) in files {
+            let path = dir.join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, content).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn wordpress_root_detected() {
+        let dir = fixture("wp", &[("wp-config.php", "<?php")]);
+        let r = scan_project(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(r.framework.as_deref(), Some("WordPress"));
+        assert!(r.commands.iter().any(|c| c.cmd.contains("php -S")));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wordpress_wins_over_package_json() {
+        let dir = fixture("wp-npm", &[
+            ("wp-config.php", "<?php"),
+            ("package.json", r#"{"name":"theme","scripts":{"build":"webpack"}}"#),
+        ]);
+        let r = scan_project(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(r.framework.as_deref(), Some("WordPress"));
+        // npm scripts survive alongside the serve command
+        assert!(r.commands.iter().any(|c| c.label == "build"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn plain_node_falls_back_to_javascript() {
+        let dir = fixture("js", &[("package.json", r#"{"name":"x","dependencies":{"lodash":"^4"}}"#)]);
+        let r = scan_project(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(r.framework.as_deref(), Some("JavaScript"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn node_with_tsconfig_falls_back_to_typescript() {
+        let dir = fixture("ts", &[
+            ("package.json", r#"{"name":"x"}"#),
+            ("tsconfig.json", "{}"),
+        ]);
+        let r = scan_project(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(r.framework.as_deref(), Some("TypeScript"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn plain_python_gets_python_badge() {
+        let dir = fixture("py", &[("requirements.txt", "requests\n")]);
+        let r = scan_project(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(r.framework.as_deref(), Some("Python"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rails_detected_from_gemfile() {
+        let dir = fixture("rails", &[("Gemfile", "gem 'rails', '~> 7.1'\n")]);
+        let r = scan_project(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(r.framework.as_deref(), Some("Rails"));
+        assert!(r.commands.iter().any(|c| c.cmd.contains("rails server")));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dotnet_web_detected() {
+        let dir = fixture("dotnet", &[(
+            "app.csproj",
+            r#"<Project Sdk="Microsoft.NET.Sdk.Web"></Project>"#,
+        )]);
+        let r = scan_project(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(r.framework.as_deref(), Some("ASP.NET Core"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deno_tasks_collected() {
+        let dir = fixture("deno", &[(
+            "deno.json",
+            r#"{"tasks":{"dev":"deno run -A --watch main.ts"}}"#,
+        )]);
+        let r = scan_project(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(r.framework.as_deref(), Some("Deno"));
+        assert!(r.commands.iter().any(|c| c.cmd == "deno task dev"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn flutter_detected_from_pubspec() {
+        let dir = fixture("flutter", &[(
+            "pubspec.yaml",
+            "name: my_app\ndependencies:\n  flutter:\n    sdk: flutter\n",
+        )]);
+        let r = scan_project(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(r.framework.as_deref(), Some("Flutter"));
+        assert_eq!(r.name, "my_app");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 // ── Process commands ───────────────────────────────
@@ -341,7 +801,30 @@ pub fn start_process(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    process::start(id, label, command, cwd, env, app, state.processes.clone())
+    process::start(
+        id,
+        label,
+        command,
+        cwd,
+        env,
+        app,
+        state.processes.clone(),
+        state.log_viewer.clone(),
+    )
+}
+
+/// Tell the backend which command's logs are on screen. Reader threads only
+/// emit live `process-log` events for this one; pass `None` when the log
+/// panel closes.
+#[tauri::command]
+pub fn set_log_viewer(id: Option<String>, label: Option<String>, state: State<'_, AppState>) {
+    let key = match (id, label) {
+        (Some(id), Some(label)) => Some(process_key(&id, &label)),
+        _ => None,
+    };
+    if let Ok(mut viewer) = state.log_viewer.lock() {
+        *viewer = key;
+    }
 }
 
 #[tauri::command]
@@ -642,6 +1125,49 @@ pub fn check_paths_exist(paths: Vec<String>) -> HashMap<String, bool> {
         let exists = Path::new(&p).is_dir();
         (p, exists)
     }).collect()
+}
+
+// ── New project folder ─────────────────────────────
+
+fn default_projects_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .document_dir()
+        .map(|d| d.join("projects"))
+        .unwrap_or_else(|_| PathBuf::from("projects"))
+}
+
+#[tauri::command]
+pub fn get_default_projects_dir(app: AppHandle) -> String {
+    default_projects_dir(&app).to_string_lossy().to_string()
+}
+
+#[tauri::command]
+pub fn create_project_folder(
+    name: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Project name is empty".into());
+    }
+    if name.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*']) || name.ends_with('.') {
+        return Err("Project name contains invalid characters".into());
+    }
+
+    let settings = load_settings(state).unwrap_or_else(|_| Settings::default());
+    let parent = if settings.projects_dir.trim().is_empty() {
+        default_projects_dir(&app)
+    } else {
+        PathBuf::from(settings.projects_dir.trim())
+    };
+
+    let target = parent.join(name);
+    if target.exists() {
+        return Err(format!("\"{}\" already exists in {}", name, parent.display()));
+    }
+    fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().to_string())
 }
 
 // ── Config persistence ─────────────────────────────

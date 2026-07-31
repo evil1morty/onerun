@@ -140,12 +140,19 @@
     <div id="dialog">
       <h3 id="dialog-title">Add Project</h3>
 
-      <label>Project folder
+      <div id="add-mode-toggle">
+        <button type="button" id="mode-existing" class="mode-btn active">Existing folder</button>
+        <button type="button" id="mode-new" class="mode-btn">New folder</button>
+      </div>
+
+      <label id="dir-field">Project folder
         <div class="input-row">
           <input type="text" id="inp-dir" placeholder="C:\Users\you\projects\app" autocomplete="off" />
           <button id="btn-scan" title="Browse folder">Browse</button>
         </div>
       </label>
+
+      <div id="new-dir-hint" class="hidden">An empty folder will be created in <code id="new-dir-parent"></code></div>
 
       <label>Name
         <input type="text" id="inp-name" placeholder="my-app" autocomplete="off" />
@@ -169,6 +176,8 @@
         <button id="btn-add-env" title="Add env var">+</button>
       </div>
       <div id="env-list"></div>
+
+      <div id="dialog-error" class="hidden"></div>
 
       <div class="dialog-actions">
         <button id="btn-cancel" class="secondary">Cancel</button>
@@ -226,6 +235,15 @@
             <span class="field-label">Command</span>
             <input type="text" id="set-editor" placeholder="code" autocomplete="off" />
             <span class="field-hint">e.g. <code>code</code>, <code>cursor</code>, <code>zed</code>, <code>webstorm</code></span>
+          </label>
+        </section>
+
+        <section class="settings-section">
+          <h3>Projects</h3>
+          <label class="field">
+            <span class="field-label">New project location</span>
+            <input type="text" id="set-projects-dir" autocomplete="off" />
+            <span class="field-hint">Parent folder for projects created with "New folder"</span>
           </label>
         </section>
 
