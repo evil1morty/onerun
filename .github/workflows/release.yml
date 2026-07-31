@@ -53,8 +53,9 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Pinned to main: the v1 tag predates Windows runner support
       - name: Rust build cache (kache)
-        uses: kunobi-ninja/kache-action@v1
+        uses: kunobi-ninja/kache-action@a257c055543c2840700a9bbca8f9c3094a421b1b
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-22.04'
